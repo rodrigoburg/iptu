@@ -36,7 +36,7 @@ class Lote:
         self.cod_cadastro_iptu = None
         self.digito_verificador = self._digito_verificador()
 
-    def carrega_dados_do_lote(self):
+    def raspa_dados_da_pagina(self):
         """Faz a consulta do lote na página da prefeitura"""
         url = "https://www3.prefeitura.sp.gov.br/sf8663/formsinternet/principal.aspx"
         driver = webdriver.PhantomJS()
@@ -106,17 +106,58 @@ class Lote:
                 complemento
                 cod_cadastro_iptu
          """
-        # consulta de o S.Q.L. atual está na collection indicada
-        # caso não esteja, insere na base.
-        # caso esteja, não faz nada
+        client = MongoClient()
+        my_db = client[self.DBASE['dbname']]
+        my_collection = my_db[self.DBASE['main_collection']]
+        if existe_lote_na_base(self):
+            my_collection.update({'id': self.id},self._formata_para_base())
+            #Atualiza o lote da base com os dados atuais
+        else:
+            my_collection.insert(self._formata_para_base())
+            #Salva o lote atual como um novo lote
 
-    def lote_na_base(self):
+    def existe_lote_na_base(self):
         """Verifica se o lote já está na collection
             Retorno: retorna True se o lote está na base e false caso não esteja"""
-        if self.nome === "Não localizado":
+        #Faz a consulta
+        my_document = self.consulta_lote_na_base()
+        if my_document:
+            return True
+        else:
+            return False
+
+    def consulta_lote_na_base(self):
+        """Consulta se o lote existe na base.
+            Caso exista, retorna o lote.
+            Caso não exista, retorna None"""
+        client = MongoClient()
+        my_db = client[self.DBASE['dbname']]
+        my_collection = my_db[self.DBASE['main_collection']]
+        my_document = my_collection.find_one({'id': self.id})
+        return my_document
+
+    def carrega_lote_da_base(self):
+        """Recupera o lote atual da base de dados carrega os valores nas
+            variáveis do objeto atual, caso o lote exista na base."""
+        my_document = self.consulta_lote_na_base()
+        if my_document:
+            self.setor = my_document.setor
+            self.quadra = my_document.quadra
+            self.lote = my_document.lote
+            self.nome = my_document.nome
+            self.cpf = my_document.cpf
+            self.cnpj = my_document.cnpj
+            self.pessoa_fisica = my_document.pessoa_fisica
+            self.endereco = my_document.endereco
+            self.numero = my_document.numero
+            self.complemento = my_document.complemento
+            self.cod_cadastro_iptu = my_document.cod_cadastro_iptu
 
     def localizado(self):
         """Retorna falso se o lote for 'não localizado'"""
+        if self.nome === "Não localizado":
+            return False
+        return True
 
     def _codigo_lote(self):
         """Retorna o código 'setor.quadra.lote'"""
@@ -167,6 +208,22 @@ class Lote:
         else:
             dac = str(wresto);
         return dac
+
+    def _formata_para_base(self):
+        return {'id': self.id,
+                'setor': self.setor,
+                'quadra': self.quadra,
+                'lote': self.lote,
+                'nome': self.nome,
+                'cpf': self.cpf,
+                'cnpj': self.cnpj,
+                'pessoa_fisica': self.pessoa_fisica,
+                'endereco': self.endereco,
+                'numero': self.numero,
+                'complemento': self.complemento,
+                'cod_cadastro_iptu': self.cod_cadastro_iptu,
+                'digito_verificador': self.digito_verificador
+                }
 
 
 
