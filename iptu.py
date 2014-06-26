@@ -6,7 +6,7 @@ from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import NoSuchElementException
 import time
-from threading import Thread
+import threading
 
 class Lote:
 
@@ -35,6 +35,13 @@ class Lote:
         self.complemento = None
         self.cod_cadastro_iptu = None
         self.digito_verificador = self._digito_verificador()
+
+    def raspa_dados_e_salva(self):
+        self.raspa_dados_da_pagina()
+        self.salva_na_base()
+        print "---------------------------------------------------------------------------------------------"
+        print "Setor: " + self.setor + " | Quadra: " + self.quadra  + " | Lote: " + self.lote + " | Nome: " + self.nome
+
 
     def raspa_dados_da_pagina(self):
         """Faz a consulta do lote na página da prefeitura"""
@@ -86,6 +93,9 @@ class Lote:
                     self.cnpj = elem.get_attribute("value")
 
                 controle01 = False
+            except NoSuchElementException:
+                controle01 = False
+                pass
             except:
                 time.sleep(self.TEMPO_DE_CONTROLE['get_lote'])
                 pass
@@ -109,24 +119,24 @@ class Lote:
         client = MongoClient()
         my_db = client[self.DBASE['dbname']]
         my_collection = my_db[self.DBASE['main_collection']]
-        if existe_lote_na_base(self):
+        if existe_na_base(self):
             my_collection.update({'id': self.id},self._formata_para_base())
             #Atualiza o lote da base com os dados atuais
         else:
             my_collection.insert(self._formata_para_base())
             #Salva o lote atual como um novo lote
 
-    def existe_lote_na_base(self):
+    def existe_na_base(self):
         """Verifica se o lote já está na collection
-            Retorno: retorna True se o lote está na base e false caso não esteja"""
+            Retorno: retorna True se o lote está na base e False caso não esteja"""
         #Faz a consulta
-        my_document = self.consulta_lote_na_base()
+        my_document = self.consulta_na_base()
         if my_document:
             return True
         else:
             return False
 
-    def consulta_lote_na_base(self):
+    def consulta_na_base(self):
         """Consulta se o lote existe na base.
             Caso exista, retorna o lote.
             Caso não exista, retorna None"""
@@ -136,10 +146,10 @@ class Lote:
         my_document = my_collection.find_one({'id': self.id})
         return my_document
 
-    def carrega_lote_da_base(self):
+    def carrega_da_base(self):
         """Recupera o lote atual da base de dados carrega os valores nas
             variáveis do objeto atual, caso o lote exista na base."""
-        my_document = self.consulta_lote_na_base()
+        my_document = self.consulta_na_base()
         if my_document:
             self.setor = my_document.setor
             self.quadra = my_document.quadra
@@ -225,212 +235,34 @@ class Lote:
                 'digito_verificador': self.digito_verificador
                 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-#acha o dígito verificador (função adaptada do javascript do site usado para verificar)
-def retornaDigito(setor,quadra,lote):
-    strVerif = setor + quadra + lote
-    ind = 2
-    wsoma = 0
-    posfinal = len(strVerif) - 1
-    for i in reversed(range(posfinal+1)):
-        char = int(strVerif[i])
-        wsoma = wsoma + (char * ind)
-        ind = ind + 1
-        if ind ==11:
-            ind = 1
-    wresto = 11 - (wsoma % 11)
-    if wresto == 10:
-        dac = "1"
-    elif wresto == 11:
-        dac = "0"
-    else:
-        dac = str(wresto);
-    return dac
-
-#função-modelo - serve só para mostrar a lógica por trás
-def descobreDono(setor,quadra,lote):
-    digito = retornaDigito(setor,quadra,lote)
-    url = "https://www3.prefeitura.sp.gov.br/sf8663/formsinternet/principal.aspx"
-    driver = webdriver.Firefox()
-    driver.get(url)
-    elem = driver.find_element_by_name("txtSetor")
-    elem.send_keys(setor)
-    elem = driver.find_element_by_name("txtQuadra")
-    elem.send_keys(quadra)
-    elem = driver.find_element_by_name("txtLote")
-    elem.send_keys(lote)
-    elem = driver.find_element_by_name("txtDigito")
-    elem.send_keys(digito)
-    elem = driver.find_element_by_name("_BtnAvancarDasii")
-    elem.click()
-    elem = driver.find_element_by_name("txtNome")
-    nome = elem.get_attribute("value")
-    elem = driver.find_element_by_name("txtEndereco")
-    end = elem.get_attribute("value")
-    elem = driver.find_element_by_name("txtNumero")
-    num = elem.get_attribute("value")
-    elem = driver.find_element_by_name("txtComplemento")
-    comp = elem.get_attribute("value")
-    print(nome + " - " + end + " - " + num + "-" + comp)
-    return nome
-
-#função para descobrir se todos os elementos são iguais
-def all_same(items):
-    return all(x == items[0] for x in items)
-
-def fazConsultas(setor1,setor2,registros_antigos):
-    #inicia o banco de dados
-    client = MongoClient()
-    my_db = client["iptu"]
-    my_collection = my_db["registros"]
-
-    #inicia o webdriver
-    url = "https://www3.prefeitura.sp.gov.br/sf8663/formsinternet/principal.aspx"
-    # driver = webdriver.Firefox()
-    driver = webdriver.PhantomJS()
-    #lista para quebrar o loop do setor se as últimas cinco quadras não tiverem nenhum lote válido
-    ultimos_45_lotes = ["continue"]
-
-    for s in range(setor1,setor2):
-        setor = retornaSetor(s)
-        #para cada uma das quadras desse setor
-        for q in range(1,900):
-            driver.get(url)
-            #coloca a quadra no formato '001'
-            quadra = '%03d' % q
-            ultimos_cinco_lotes = []
-
-            #sai desse setor se as últimas cinco quadras só tiverem dado 'Não localizado'
-            if all_same(ultimos_45_lotes):
-                if ultimos_45_lotes[0] == "Não localizado":
-                    break
-
-            #para cada lote dentro dessa quadra
-            for i in range(1,9000):
-                registro = {}
-                #coloca o lote no formato '0001'
-                lote = '%04d' % i
-
-                #checa se o registro já está na base
-                if(setor + "-" + quadra + "-" + lote) in registros_antigos:
-                    #TODO: função que consulta um SQL específico na base
-                    print(setor + "-" + quadra + "-" + lote +": Já existente")
-                else:
-
-                    #acha o dígito verificador
-                    digito = retornaDigito(setor,quadra,lote)
-
-                    #manda as inftos
-                    elem = driver.find_element_by_name("txtSetor")
-                    elem.send_keys(setor)
-                    elem = driver.find_element_by_name("txtQuadra")
-                    elem.send_keys(quadra)
-                    elem = driver.find_element_by_name("txtLote")
-                    elem.clear()
-                    elem.send_keys(lote)
-                    elem = driver.find_element_by_name("txtDigito")
-                    elem.clear()
-                    elem.send_keys(digito)
-
-                    #try para pegar a exceção que representa um lote cancelado
-                    try:
-                        #avança para a próxima página
-                        elem = driver.find_element_by_name("_BtnAvancarDasii")
-                        elem.click()
-                        #pega os valores da página
-                        elem = driver.find_element_by_name("txtNome")
-                        registro['nome'] = elem.get_attribute("value")
-
-                        #testa se os últimos cinco valores foram não localizados, para trocar de lote
-                        ultimos_cinco_lotes.append(registro['nome'])
-                        #deixa os últimos 45 lotes só com esse tamanho, para quebrar o loop de quadra
-                        #se todas tiverem sido canceladas (Não Localizado)
-                        ultimos_45_lotes.append(registro['nome'])
-                        if len(ultimos_45_lotes) > 45:
-                            ultimos_45_lotes = ultimos_45_lotes[0:44]
-
-                        if len(ultimos_cinco_lotes)> 6:
-                            ultimos_cinco_lotes.pop(0)
-                            #só quebra o loop se já estivermos após os 15 primeiros lotes
-                            #isso é necessário pois há várias quadras com os primeiros lotes cancelados
-                            if i > 15:
-                                #se o dono dos últimos cinco lotes forem o mesmo
-                                if all_same(ultimos_cinco_lotes):
-                                    #e se esse dono for "Não Localizado", quebre o loop
-                                    if ultimos_cinco_lotes[0] == "Não localizado":
-                                        break
-
-                        #pega as outros infos além do nome
-                        elem = driver.find_element_by_name("txtEndereco")
-                        registro["endereco"] = elem.get_attribute("value")
-                        elem = driver.find_element_by_name("txtNumero")
-                        registro["numero"] = elem.get_attribute("value")
-                        elem = driver.find_element_by_name("txtComplemento")
-                        registro["complemento"] = elem.get_attribute("value")
-
-                        #acrescenta os dados relativos ao codigo
-                        registro["codigo"] = setor + "-" + quadra + "-" + lote
-
-                        #se houver nome para o imóvel, insere no banco de dados
-                        if registro["nome"] != "Não localizado":
-                            my_collection.insert(registro)
-                        print(setor + "-" + quadra + "-" + lote + ": "+ registro["nome"] + " - " + registro["endereco"] + " - " + registro["numero"] + " - " + registro["complemento"])
-
-                        #volta à página anterior e coloca outro lote para pesquisar
-                        driver.back()
-                        time.sleep(1)
-
-                    #ignora se o registro houver sido cancelado
-                    except NoSuchElementException:
-                        pass
-
-
-    driver.close()
-
-def registrosAntigos():
-    client = MongoClient()
-    my_db = client["iptu"]
-    my_collection = my_db["registros"]
-    registros = []
-    for r in my_collection.find():
-        registros.append(r['codigo'])
-    return registros
-
-def retornaSetor(i):
-    return '%03d' % i
-
-
-def comecaThread(x,y,threads):
-    antigos = registrosAntigos()
-    thread = Thread(target = fazConsultas, args = (x,y,antigos, ))
-    thread.start()
-    threads.append(thread)
-    return threads
+def adiciona_nova_thread(result_queue, setor, quadra, num_lote):
+    """Função que adiciona uma nova thread na lista de threads, consultando mais um lote"""
+    lote = Lote(setor, quadra, num_lote)
+    if not lote.existe_na_base():
+        result_queue.put(lote.raspa_dados_e_salva())
 
 threads = []
-threads.append(comecaThread(11,30,threads))
-threads.append(comecaThread(32,60,threads))
-threads.append(comecaThread(62,90,threads))
 
-for t in threads:
-    t.join()
-#fazConsultas()
-#veRegistros()
+total_threads_simultaneas = 20
+total_setores = 999
+total_quadras = 999
+total_lotes = 9999
+n = 0
 
-def main():
-    """Função Principal"""
+feitos = {}
 
-if __name__ == "__main__":
-    #código que vai ser efetivamente executado
-
+for setor in range(1,total_setores+1):
+    feitos[setor] = {}
+    for quadra in range(1, total_quadras+1):
+        feitos[setor][quadra] = []
+        for num_lote in range(1,total_lotes+1):
+            feitos[setor][quadra].append(lote)
+            t = threading.Thread(target=carrega_lote, args=[result_queue, setor, quadra, num_lote])
+            threads.append(t)
+            t.start()
+            n = n + 1
+            if n = total_threads_simultaneas:
+                print "Waiting for some results"
+                for t in threads:
+                    t.join()
+                n = 0
